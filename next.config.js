@@ -1,43 +1,22 @@
 /** @type {import('next').NextConfig} */
 
-module.exports = {
-  async redirects() {
-    return [
-      {
-        source: "/admin",
-        destination: "https://app.forestry.io/login",
-        permanent: true,
-        basePath: false,
-      },
-    ];
-  },
-  // Append the default value with md extensions
-  pageExtensions: ["ts", "tsx", "js", "jsx", "md", "mdx", "html"],
+const nextConfig = {
   reactStrictMode: true,
-  trailingSlash: false,
+  env: {
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+  },
   images: {
-    domains: ["res.cloudinary.com"],
+    domains: ['res.cloudinary.com'],
   },
-  compiler: {
-    removeConsole: true,
-  },
-  webpack: (config) => {
-    config.resolve.alias = {
-      ...config.resolve.alias,
-      '@': __dirname,
-    };
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        fs: false,
+        path: false,
+      };
+    }
     return config;
-  },
-  experimental: {
-    esmExternals: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
   },
 };
 
-// const nextConfig = {
-//   reactStrictMode: true,
-// }
-
-// module.exports = nextConfig
+module.exports = nextConfig;

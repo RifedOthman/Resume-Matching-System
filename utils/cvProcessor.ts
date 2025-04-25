@@ -1,4 +1,5 @@
 import * as pdfjs from 'pdfjs-dist';
+import { analyzeMatch, MatchAnalysis } from './openaiService';
 
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
@@ -6,6 +7,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/$
 export interface CVContent {
   text: string;
   language: string;
+  analysis?: MatchAnalysis;
 }
 
 // Simple language detection based on common words
@@ -23,62 +25,6 @@ export function detectLanguage(text: string): string {
   });
   
   return frenchCount > englishCount ? 'French' : 'English';
-}
-
-// Extract skills and requirements from text
-function extractSkillsAndRequirements(text: string): string[] {
-  const commonSkills = [
-    // Programming Languages
-    'javascript', 'python', 'java', 'c++', 'c#', 'ruby', 'php', 'swift', 'kotlin', 'go', 'rust',
-    // Web Technologies
-    'react', 'angular', 'vue', 'next.js', 'node.js', 'express', 'django', 'flask', 'spring', 'laravel',
-    // Databases
-    'sql', 'mysql', 'postgresql', 'mongodb', 'redis', 'cassandra', 'elasticsearch',
-    // Cloud & DevOps
-    'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'jenkins', 'git', 'ci/cd', 'terraform',
-    // Frontend
-    'html', 'css', 'sass', 'less', 'typescript', 'redux', 'graphql', 'webpack', 'babel',
-    // Testing
-    'jest', 'mocha', 'cypress', 'selenium', 'junit', 'pytest',
-    // Methodologies
-    'agile', 'scrum', 'kanban', 'waterfall',
-    // Soft Skills
-    'leadership', 'communication', 'teamwork', 'problem-solving', 'time management',
-    // Other
-    'rest', 'api', 'microservices', 'machine learning', 'ai', 'data science', 'big data', 'analytics'
-  ];
-
-  const words = text.toLowerCase().split(/\s+/);
-  return commonSkills.filter(skill => words.includes(skill));
-}
-
-// Calculate match percentage based on skills and text similarity
-function calculateMatch(jobDescription: CVContent, candidateCV: CVContent): number {
-  try {
-    const jobRequirements = extractSkillsAndRequirements(jobDescription.text);
-    const candidateSkills = extractSkillsAndRequirements(candidateCV.text);
-    
-    if (jobRequirements.length === 0) {
-      console.warn('No requirements found in job description');
-      return 0;
-    }
-    
-    // Calculate skill match
-    const matchingSkills = jobRequirements.filter(skill => candidateSkills.includes(skill));
-    const skillMatchPercentage = (matchingSkills.length / jobRequirements.length) * 100;
-    
-    // Calculate text similarity
-    const jobWords = new Set(jobDescription.text.toLowerCase().split(/\s+/));
-    const candidateWords = new Set(candidateCV.text.toLowerCase().split(/\s+/));
-    const commonWords = new Set([...jobWords].filter(word => candidateWords.has(word)));
-    const textMatchPercentage = (commonWords.size / jobWords.size) * 100;
-    
-    // Combine both scores (70% weight for skills, 30% for text similarity)
-    return (skillMatchPercentage * 0.7) + (textMatchPercentage * 0.3);
-  } catch (error: any) {
-    console.error('Error in calculateMatch:', error);
-    return 0;
-  }
 }
 
 export async function extractTextFromPDF(file: File): Promise<CVContent> {
@@ -113,7 +59,7 @@ export async function extractTextFromPDF(file: File): Promise<CVContent> {
   }
 }
 
-export async function compareCVs(jobDescription: CVContent, candidateCVs: CVContent[]): Promise<{ index: number; matchPercentage: number }[]> {
+export async function compareCVs(jobDescription: CVContent, candidateCVs: CVContent[]): Promise<{ index: number; matchPercentage: number; analysis: MatchAnalysis }[]> {
   try {
     if (!jobDescription.text.trim()) {
       throw new Error('Job description is empty');
@@ -123,15 +69,39 @@ export async function compareCVs(jobDescription: CVContent, candidateCVs: CVCont
       throw new Error('No candidate CVs provided');
     }
 
-    const results = candidateCVs.map((cv, index) => {
-      try {
-        const matchPercentage = calculateMatch(jobDescription, cv);
-        return { index, matchPercentage };
-      } catch (error: any) {
-        console.error(`Error processing CV ${index}:`, error);
-        return { index, matchPercentage: 0 };
-      }
-    });
+    // Process each CV with OpenAI analysis
+    const results = await Promise.all(
+      candidateCVs.map(async (cv, index) => {
+        try {
+          // Get analysis from OpenAI
+          const analysis = await analyzeMatch(jobDescription.text, cv.text);
+          return {
+            index,
+            matchPercentage: analysis.matchPercentage,
+            analysis
+          };
+        } catch (error: any) {
+          console.error(`Error processing CV ${index}:`, error);
+          return {
+            index,
+            matchPercentage: 0,
+            analysis: {
+              matchPercentage: 0,
+              technicalSkillsMatch: {
+                matching: [],
+                missing: [],
+                score: 0
+              },
+              experienceMatch: {
+                relevantExperience: [],
+                score: 0
+              },
+              overallAnalysis: `Error analyzing CV: ${error.message}`
+            }
+          };
+        }
+      })
+    );
 
     // Sort by match percentage in descending order
     return results.sort((a, b) => b.matchPercentage - a.matchPercentage);
